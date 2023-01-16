@@ -177,13 +177,14 @@ int main(const int argc, const char** argv) {
             "Send me the images to add watermark"
             " and the final message to send to the channel");
         vector<string> images;
+        auto current_id = message->from->id;
         // Start the conversation
         bot.getEvents().onAnyMessage([&](Message::Ptr message_a) {
             // Only listen to the user
-            printf("dbg %ld %ld\n", message_a->from->id, message->from->id);
-            if (message_a->from->id != message->from->id) {
+            if (message_a->from->id != current_id) {
                 return;
             }
+
             // Check if the message is a photo
             if (message_a->photo.empty()) {
                 // Check if the message is a text
