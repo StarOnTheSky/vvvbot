@@ -30,6 +30,8 @@ using namespace TgBot;
 static cv::Mat Watermark;
 static vector<int64> uids;
 static bool running = true;
+static int64 current_uid = 0;
+static vector<string> images;
 
 bool auth(int64 id) {
     return any_of(uids.begin(), uids.end(), [&](int64 uid) {
@@ -173,15 +175,21 @@ int main(const int argc, const char** argv) {
             // Ignore the message
             return;
         }
+        if (current_uid != 0) {
+            bot.getApi().sendMessage(message->chat->id, "Another user is using the bot");
+            return;
+        }
+        current_uid = message->from->id;
+
         bot.getApi().sendMessage(message->chat->id, 
             "Send me the images to add watermark"
             " and the final message to send to the channel");
-        vector<string> images;
-        auto current_id = message->from->id;
+
         // Start the conversation
         bot.getEvents().onAnyMessage([&](Message::Ptr message_a) {
-            // Only listen to the user
-            if (message_a->from->id != current_id) {
+            // Check if the message is from the same user
+            if (message_a->from->id != current_uid) {
+                // Ignore the message
                 return;
             }
 
@@ -242,6 +250,8 @@ int main(const int argc, const char** argv) {
                             remove(image.c_str());
                         }
                     }
+                    images.clear();
+                    current_uid = 0;
                 });
                 return;
             }
