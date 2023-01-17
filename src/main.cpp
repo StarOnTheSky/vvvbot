@@ -91,8 +91,31 @@ int add_watermark(const string &img)
         return 1;
     }
     // Resize the watermark
+    cv::Mat watermark_1;
     cv::Mat watermark;
-    cv::resize(Watermark, watermark, cv::Size(image.cols, image.rows), 0, 0, cv::INTER_CUBIC);
+    // Crop the watermark to the same aspect ratio as the image
+    double ratio = (double)image.cols / image.rows;
+    int w = Watermark.cols;
+    int h = Watermark.rows;
+    if (ratio < w / h)
+    {
+        w = (int)(h * ratio);
+    }
+    else
+    {
+        h = (int)(w / ratio);
+    }
+    // Ensure w and h < watermark original size
+    if (w > Watermark.cols)
+    {
+        w = Watermark.cols;
+    }
+    if (h > Watermark.rows)
+    {
+        h = Watermark.rows;
+    }
+    watermark_1 = Watermark(cv::Rect(0, 0, w, h));
+    cv::resize(watermark_1, watermark, cv::Size(image.cols, image.rows), 0, 0, cv::INTER_CUBIC);
     // Add the watermark
     cv::addWeighted(image, 1.0, watermark, config.alpha, 0.0, image);
     // Save the image
@@ -164,10 +187,14 @@ void handle_message(Bot &bot, const Message::Ptr message)
         bot.getEvents().onCallbackQuery([&s, &bot](CallbackQuery::Ptr query)
                                         {
                     if (query->data == "yes") {
-                        // Send the images to the channel
+                        // Send the images to the channel in media group
+                        vector<InputMedia::Ptr> media;
                         for (const string& id : s.media_id) {
-                            bot.getApi().sendPhoto(config.channel, id);
+                            auto input_media = std::make_shared<InputMediaPhoto>();
+                            input_media->media = id;
+                            media.push_back(input_media);
                         }
+                        bot.getApi().sendMediaGroup(config.channel, media);
                         // Send the final message
                         bot.getApi().sendMessage(config.channel, s.description);
                         // Send the confirmation message
