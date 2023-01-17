@@ -283,7 +283,7 @@ int main(const int argc, const char **argv)
         }
         else if (string(argv[i]) == "-h")
         {
-            printf("Usage: %s -t <token> -d <channel> -u <uids> [-w <watermark>] [-a <alpha>]\n", argv[0]);
+            printf("Usage: %s -t <token> -d <channel> -u <uids> [-w <watermark>] [-a <alpha>] [-s <path/to/save>]\n", argv[0]);
             return 0;
         }
         else
@@ -314,15 +314,20 @@ int main(const int argc, const char **argv)
     if (save)
     {
         config.save_path.append("/");
-        // Test if the directory is writable
-        FILE *f = fopen((config.save_path + "test").c_str(), "w");
-        if (f == nullptr)
+        // Test if the directory exists and writable, create if not exists
+        if (access(config.save_path.c_str(), F_OK) != 0)
         {
-            printf("Save path '%s' is not writable\n", config.save_path.c_str());
+            if (mkdir(config.save_path.c_str(), 0777) != 0)
+            {
+                printf("Failed to create the directory '%s'\n", config.save_path.c_str());
+                return 1;
+            }
+        }
+        else if (access(config.save_path.c_str(), W_OK) != 0)
+        {
+            printf("The directory '%s' is not writable\n", config.save_path.c_str());
             return 1;
         }
-        fclose(f);
-        remove((config.save_path + "test").c_str());
     }
 
     // Parse UIDs
