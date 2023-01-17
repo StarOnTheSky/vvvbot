@@ -63,7 +63,7 @@ struct _status
     string path;
 };
 
-static map<int64, _status> status;
+static map<int64, _status> status; // User ID -> Status
 
 bool auth(int64 id)
 {
@@ -132,14 +132,17 @@ void handle_message(Bot &bot, const Message::Ptr message)
         // Send the final message
         bot.getApi().sendMessage(message->chat->id, "Sending the images...");
 
-        // Send the images in a media group
+        // Send the images to the user, get the file IDs
+        // and store them in order to send them to the channel in media group
         vector<InputMedia::Ptr> media;
-        for (const string& image : s.images) {
+        for (const string &image : s.images)
+        {
             auto m = std::make_shared<InputMediaPhoto>();
-            m->media = "attach://" + s.path + image;
+            auto photo_msg = bot.getApi().sendPhoto(message->chat->id, InputFile::fromFile(s.path + image, "image/jpeg"));
+            // Get the file ID
+            m->media = photo_msg->photo.back()->fileId;
             media.push_back(m);
         }
-        bot.getApi().sendMediaGroup(message->chat->id, media);
         // Send the final message
         bot.getApi().sendMessage(message->chat->id, t);
         // Ask user to confirm
@@ -402,8 +405,7 @@ int main(const int argc, const char **argv)
                 return;
             }
         }
-        status[message->from->id].path = path;
-    });
+        status[message->from->id].path = path; });
 
     // Register the /cancel command
     bot.getEvents().onCommand("cancel", [&bot](Message::Ptr message)
