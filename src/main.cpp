@@ -239,7 +239,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
     }
 
     // Add the watermark
-    if (add_watermark(filename))
+    if (add_watermark(path + filename))
     {
         bot.getApi().sendMessage(message->chat->id, "Failed to add the watermark");
         return;
