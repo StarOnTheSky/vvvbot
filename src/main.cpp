@@ -56,11 +56,14 @@ static _config config;
 
 struct _status
 {
+    int64 uid;
     bool sending;
     vector<string> images;
     int index;
     string datetime;
     string path;
+    vector<string> media_id;
+    string description;
 };
 
 static map<int64, _status> status; // User ID -> Status
@@ -124,7 +127,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
             // Unknown message, ignore it
             return;
         }
-        auto t = message->text;
+        s.description = message->text;
         if (s.images.empty())
         {
             bot.getApi().sendMessage(message->chat->id, "Please send me the images first");
@@ -134,15 +137,15 @@ void handle_message(Bot &bot, const Message::Ptr message)
         bot.getApi().sendMessage(message->chat->id, "Sending the images...");
 
         // Send the images to the user, get the file IDs
-        // and store them in order to send them to the channel in media group
-        vector<string> media_id;
+        // and store them in order to send them to the channel without uploading them again
+        
         for (const string &image : s.images)
         {
             auto photo_msg = bot.getApi().sendPhoto(message->chat->id, InputFile::fromFile(s.path + image, "image/jpeg"));
-            media_id.push_back(photo_msg->photo.back()->fileId);
+            s.media_id.push_back(photo_msg->photo.back()->fileId);
         }
         // Send the final message
-        bot.getApi().sendMessage(message->chat->id, t);
+        bot.getApi().sendMessage(message->chat->id, s.description);
         // Ask user to confirm
         auto keyboard(std::make_shared<InlineKeyboardMarkup>());
         keyboard->inlineKeyboard.emplace_back();
@@ -158,30 +161,26 @@ void handle_message(Bot &bot, const Message::Ptr message)
         // Stop the conversation
         s.sending = false;
         // Start the confirmation
-        bot.getEvents().onCallbackQuery([&](CallbackQuery::Ptr query)
+        bot.getEvents().onCallbackQuery([&s, &bot](CallbackQuery::Ptr query)
                                         {
                     if (query->data == "yes") {
                         // Send the images to the channel
-                        vector<InputMedia::Ptr> media;
-                        for (const string& id : media_id) {
-                            InputMedia::Ptr photo;
-                            photo->media = id;
-                            media.push_back(photo);
+                        for (const string& id : s.media_id) {
+                            bot.getApi().sendPhoto(config.channel, id);
                         }
-                        bot.getApi().sendMediaGroup(config.channel, media);
                         // Send the final message
-                        bot.getApi().sendMessage(config.channel, t);
+                        bot.getApi().sendMessage(config.channel, s.description);
                         // Send the confirmation message
-                        bot.getApi().sendMessage(message->chat->id, "Images sent to the channel");
+                        bot.getApi().sendMessage(s.uid, "Images sent to the channel");
                     } else {
                         // Send the confirmation message
-                        bot.getApi().sendMessage(message->chat->id, "Canceled");
+                        bot.getApi().sendMessage(s.uid, "Canceled");
                     }
-                    // Stop the confirmation
-                    bot.getEvents().onCallbackQuery(nullptr);
+                    // Delete the confirmation message
+                    bot.getApi().deleteMessage(query->message->chat->id, query->message->messageId);
 
                     // Clean up
-                    if (!config.save_path.empty()) {
+                    if (config.save_path.empty()) {
                         for (const string& image : s.images) {
                             remove(image.c_str());
                         }
@@ -190,13 +189,15 @@ void handle_message(Bot &bot, const Message::Ptr message)
                         string info = s.path + "info.txt";
                         auto f = fopen(info.c_str(), "w");
                         if (f == nullptr) {
-                            bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
-                            return;
+                            printf("Failed to write %s\n", info.c_str());
                         }
-                        fprintf(f, "Time: %s\nUser: %ld\nMessage: %s\nImages: %ld", s.datetime.c_str(), message->from->id, t.c_str(), s.images.size());
+                        fprintf(f, "Time: %s\nUser: %ld\nMessage: %s\nImages: %ld", s.datetime.c_str(), s.uid, s.description.c_str(), s.images.size());
                         fclose(f);
                     }
-                    status.erase(message->from->id); });
+                    status.erase(s.uid);
+                    
+                    // Stop the confirmation
+                    bot.getEvents().onCallbackQuery(nullptr); });
         return;
     }
     // Check if the user is sending images
@@ -398,6 +399,7 @@ int main(const int argc, const char **argv)
             "Send me the images to add watermark"
             " and the final message to send to the channel");
         // Start the conversation
+        status[message->from->id].uid = message->from->id;
         status[message->from->id].sending = true;
         status[message->from->id].datetime = iso8601();
         string path = "";
