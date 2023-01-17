@@ -9,6 +9,17 @@
     -a: The alpha value of the watermark (default is 0.5)
     -s: Save the images to destination directory (default not to save them)
 
+    Saved files:
+    - save_path/<datetime>/<file_id>.jpg: The watermarked images
+    - save_path/<datetime>/orig_<file_id>.jpg: The original images
+    - save_path/<datetime>/info.txt: The information of the images
+
+    Content of info.txt:
+    - Time: <time>
+    - User: <user>
+    - Message: <message>
+    - Images: <number of images>
+
     Commands:
     /start: Start the bot
     /send: Start sending
@@ -48,6 +59,7 @@ struct _status
     bool sending;
     vector<string> images;
     int index;
+    string datetime;
 };
 
 static map<int64, _status> status;
@@ -74,14 +86,22 @@ int add_watermark(const string &img)
         printf("Failed to read image %s\n", img.c_str());
         return 1;
     }
-    // Resize the watermark
-    cv::Mat watermark;
-    cv::resize(Watermark, watermark, cv::Size(image.cols, image.rows));
+    // Crop the watermark to the same size as the image
+    cv::Mat watermark = Watermark(cv::Rect(0, 0, image.cols, image.rows));
     // Add the watermark
     cv::addWeighted(image, 1.0, watermark, config.alpha, 0.0, image);
     // Save the image
     cv::imwrite(img, image);
     return 0;
+}
+
+string iso8601()
+{
+    auto now = chrono::system_clock::now();
+    auto in_time_t = chrono::system_clock::to_time_t(now);
+    char buffer[80];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%S", localtime(&in_time_t));
+    return string(buffer);
 }
 
 void handle_message(Bot &bot, const Message::Ptr message)
@@ -102,6 +122,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
             // Unknown message, ignore it
             return;
         }
+        auto t = message->text;
         if (s.images.empty())
         {
             bot.getApi().sendMessage(message->chat->id, "Please send me the images first");
@@ -115,7 +136,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
             bot.getApi().sendPhoto(message->chat->id, InputFile::fromFile(image, "image/jpeg"));
         }
         // Send the final message
-        bot.getApi().sendMessage(message->chat->id, message->text);
+        bot.getApi().sendMessage(message->chat->id, t);
         // Ask user to confirm
         auto keyboard(std::make_shared<InlineKeyboardMarkup>());
         keyboard->inlineKeyboard.emplace_back();
@@ -139,7 +160,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
                             bot.getApi().sendPhoto(config.channel, InputFile::fromFile(image, "image/jpeg"));
                         }
                         // Send the final message
-                        bot.getApi().sendMessage(config.channel, message->text);
+                        bot.getApi().sendMessage(config.channel, t);
                         // Send the confirmation message
                         bot.getApi().sendMessage(message->chat->id, "Images sent to the channel");
                     } else {
@@ -154,6 +175,16 @@ void handle_message(Bot &bot, const Message::Ptr message)
                         for (const string& image : s.images) {
                             remove(image.c_str());
                         }
+                    } else {
+                        // Write info.txt
+                        string info = config.save_path + s.datetime + "/" + "info.txt";
+                        auto f = fopen(info.c_str(), "w");
+                        if (f == nullptr) {
+                            bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
+                            return;
+                        }
+                        fprintf(f, "Time: %s\nUser: %ld\nMessage: %s\nImages: %ld", s.datetime.c_str(), message->from->id, t.c_str(), s.images.size());
+                        fclose(f);
                     }
                     status.erase(message->from->id); });
         return;
@@ -163,14 +194,21 @@ void handle_message(Bot &bot, const Message::Ptr message)
     const PhotoSize::Ptr photo = message->photo.back();
     // Download the photo
     string filename = photo->fileId + ".jpg";
+    string path = "";
     if (!config.save_path.empty())
     {
-        filename = config.save_path + filename;
+        s.datetime = iso8601();
+        path = config.save_path + s.datetime + "/";
+        if (mkdir(path.c_str(), 0777) != 0)
+        {
+            bot.getApi().sendMessage(message->chat->id, "Failed to create the directory");
+            return;
+        }
     }
     try
     {
         auto file = bot.getApi().getFile(photo->fileId);
-        auto f = fopen(filename.c_str(), "w");
+        auto f = fopen((path + filename).c_str(), "w");
         if (f == nullptr)
         {
             bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
@@ -179,6 +217,20 @@ void handle_message(Bot &bot, const Message::Ptr message)
         auto content = bot.getApi().downloadFile(file->filePath);
         fwrite(content.data(), 1, content.size(), f);
         fclose(f);
+
+        // Save an original copy
+        if (!config.save_path.empty())
+        {
+            string original = path + "orig_" + filename;
+            f = fopen(original.c_str(), "w");
+            if (f == nullptr)
+            {
+                bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
+                return;
+            }
+            fwrite(content.data(), 1, content.size(), f);
+            fclose(f);
+        }
     }
     catch (exception &e)
     {
@@ -368,19 +420,12 @@ int main(const int argc, const char **argv)
                                  { handle_message(bot, message); });
 
     // Start the bot
-    try
+    printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
+    TgLongPoll longPoll(bot);
+    while (running)
     {
-        printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
-        TgLongPoll longPoll(bot);
-        while (running)
-        {
-            printf("Long poll started\n");
-            longPoll.start();
-        }
-    }
-    catch (exception &e)
-    {
-        printf("Error: %s\n", e.what());
+        printf("Long poll started\n");
+        longPoll.start();
     }
     return 0;
 }
