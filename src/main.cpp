@@ -87,8 +87,9 @@ int add_watermark(const string &img)
         printf("Failed to read image %s\n", img.c_str());
         return 1;
     }
-    // Crop the watermark to the same size as the image
-    cv::Mat watermark = Watermark(cv::Rect(0, 0, image.cols, image.rows));
+    // Resize the watermark
+    cv::Mat watermark;
+    cv::resize(Watermark, watermark, cv::Size(image.cols, image.rows), 0, 0, cv::INTER_CUBIC);
     // Add the watermark
     cv::addWeighted(image, 1.0, watermark, config.alpha, 0.0, image);
     // Save the image
@@ -134,14 +135,11 @@ void handle_message(Bot &bot, const Message::Ptr message)
 
         // Send the images to the user, get the file IDs
         // and store them in order to send them to the channel in media group
-        vector<InputMedia::Ptr> media;
+        vector<string> media_id;
         for (const string &image : s.images)
         {
-            auto m = std::make_shared<InputMediaPhoto>();
             auto photo_msg = bot.getApi().sendPhoto(message->chat->id, InputFile::fromFile(s.path + image, "image/jpeg"));
-            // Get the file ID
-            m->media = photo_msg->photo.back()->fileId;
-            media.push_back(m);
+            media_id.push_back(photo_msg->photo.back()->fileId);
         }
         // Send the final message
         bot.getApi().sendMessage(message->chat->id, t);
@@ -163,6 +161,13 @@ void handle_message(Bot &bot, const Message::Ptr message)
         bot.getEvents().onCallbackQuery([&](CallbackQuery::Ptr query)
                                         {
                     if (query->data == "yes") {
+                        // Send the images to the channel
+                        vector<InputMedia::Ptr> media;
+                        for (const string& id : media_id) {
+                            InputMedia::Ptr photo;
+                            photo->media = id;
+                            media.push_back(photo);
+                        }
                         bot.getApi().sendMediaGroup(config.channel, media);
                         // Send the final message
                         bot.getApi().sendMessage(config.channel, t);
