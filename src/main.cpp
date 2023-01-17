@@ -60,6 +60,7 @@ struct _status
     vector<string> images;
     int index;
     string datetime;
+    string path;
 };
 
 static map<int64, _status> status;
@@ -130,11 +131,15 @@ void handle_message(Bot &bot, const Message::Ptr message)
         }
         // Send the final message
         bot.getApi().sendMessage(message->chat->id, "Sending the images...");
-        // Send the images
-        for (const string &image : s.images)
-        {
-            bot.getApi().sendPhoto(message->chat->id, InputFile::fromFile(image, "image/jpeg"));
+
+        // Send the images in a media group
+        vector<InputMedia::Ptr> media;
+        for (const string& image : s.images) {
+            auto m = std::make_shared<InputMediaPhoto>();
+            m->media = "attach://" + s.path + image;
+            media.push_back(m);
         }
+        bot.getApi().sendMediaGroup(message->chat->id, media);
         // Send the final message
         bot.getApi().sendMessage(message->chat->id, t);
         // Ask user to confirm
@@ -155,10 +160,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
         bot.getEvents().onCallbackQuery([&](CallbackQuery::Ptr query)
                                         {
                     if (query->data == "yes") {
-                        // Send the images
-                        for (const string& image : s.images) {
-                            bot.getApi().sendPhoto(config.channel, InputFile::fromFile(image, "image/jpeg"));
-                        }
+                        bot.getApi().sendMediaGroup(config.channel, media);
                         // Send the final message
                         bot.getApi().sendMessage(config.channel, t);
                         // Send the confirmation message
@@ -177,7 +179,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
                         }
                     } else {
                         // Write info.txt
-                        string info = config.save_path + s.datetime + "/" + "info.txt";
+                        string info = s.path + "info.txt";
                         auto f = fopen(info.c_str(), "w");
                         if (f == nullptr) {
                             bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
@@ -189,26 +191,20 @@ void handle_message(Bot &bot, const Message::Ptr message)
                     status.erase(message->from->id); });
         return;
     }
-
+    // Check if the user is sending images
+    if (!s.sending)
+    {
+        // Ignore the images
+        return;
+    }
     // Get the photo
     const PhotoSize::Ptr photo = message->photo.back();
     // Download the photo
     string filename = photo->fileId + ".jpg";
-    string path = "";
-    if (!config.save_path.empty())
-    {
-        s.datetime = iso8601();
-        path = config.save_path + s.datetime + "/";
-        if (mkdir(path.c_str(), 0777) != 0)
-        {
-            bot.getApi().sendMessage(message->chat->id, "Failed to create the directory");
-            return;
-        }
-    }
     try
     {
         auto file = bot.getApi().getFile(photo->fileId);
-        auto f = fopen((path + filename).c_str(), "w");
+        auto f = fopen((s.path + filename).c_str(), "w");
         if (f == nullptr)
         {
             bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
@@ -221,7 +217,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
         // Save an original copy
         if (!config.save_path.empty())
         {
-            string original = path + "orig_" + filename;
+            string original = s.path + "orig_" + filename;
             f = fopen(original.c_str(), "w");
             if (f == nullptr)
             {
@@ -239,7 +235,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
     }
 
     // Add the watermark
-    if (add_watermark(path + filename))
+    if (add_watermark(s.path + filename))
     {
         bot.getApi().sendMessage(message->chat->id, "Failed to add the watermark");
         return;
@@ -394,7 +390,20 @@ int main(const int argc, const char **argv)
             "Send me the images to add watermark"
             " and the final message to send to the channel");
         // Start the conversation
-        status[message->from->id].sending = true; });
+        status[message->from->id].sending = true;
+        status[message->from->id].datetime = iso8601();
+        string path = "";
+        if (!config.save_path.empty())
+        {
+            path = config.save_path + status[message->from->id].datetime + "/";
+            if (mkdir(path.c_str(), 0777) != 0)
+            {
+                bot.getApi().sendMessage(message->chat->id, "Failed to create the directory");
+                return;
+            }
+        }
+        status[message->from->id].path = path;
+    });
 
     // Register the /cancel command
     bot.getEvents().onCommand("cancel", [&bot](Message::Ptr message)
