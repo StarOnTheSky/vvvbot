@@ -187,16 +187,15 @@ void handle_message(Bot &bot, const Message::Ptr message)
         bot.getEvents().onCallbackQuery([&s, &bot](CallbackQuery::Ptr query)
                                         {
                     if (query->data == "yes") {
-                        // Send the images to the channel in media group
+                        // Send the images to the channel in media group with the description
                         vector<InputMedia::Ptr> media;
                         for (const string& id : s.media_id) {
                             auto input_media = std::make_shared<InputMediaPhoto>();
                             input_media->media = id;
+                            input_media->caption = s.description;
                             media.push_back(input_media);
                         }
                         bot.getApi().sendMediaGroup(config.channel, media);
-                        // Send the final message
-                        bot.getApi().sendMessage(config.channel, s.description);
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "Images sent to the channel");
                     } else {
