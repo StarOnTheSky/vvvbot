@@ -381,7 +381,6 @@ void handle_watermark(Bot &bot, Message::Ptr message)
         string description_f;
         getline(f, description_f);
         if (!description_f.starts_with("Description: ")) {
-            cout << description_f << endl;
             throw exception();
         }
         string description = description_f.substr(13);
@@ -390,7 +389,6 @@ void handle_watermark(Bot &bot, Message::Ptr message)
         string images_f;
         getline(f, images_f, '\n');
         if (!images_f.starts_with("Images: ")) {
-            cout << images_f << endl;
             throw exception();
         }
         vector<string> images;
@@ -422,7 +420,6 @@ void handle_watermark(Bot &bot, Message::Ptr message)
         return;
     }
     catch (exception &e) {
-        cout << e.what() << endl;
         add_temp_message(message);
         add_temp_message(bot.getApi().sendMessage(message->chat->id, "Wrong file format"));
         return;
@@ -566,6 +563,14 @@ int main(const int argc, const char **argv)
                               {
         if (!auth(message->from->id)) {
             // Ignore the message
+            return;
+        }
+
+        // If not private chat, ignore the message
+        if (message->chat->type != Chat::Type::Private)
+        {
+            add_temp_message(message);
+            add_temp_message(bot.getApi().sendMessage(message->chat->id, "Please send me the command in private chat"));
             return;
         }
 
