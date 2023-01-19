@@ -73,27 +73,49 @@ struct _status
 };
 static map<int64, _status> status; // User ID -> Status
 
-static vector<Message::Ptr> messages_to_delete; // Messages to delete after 5s
-void delete_messages(Bot &bot) {
+struct _messages_to_delete {
+    int64 chat_id;
+    int message_id;
+    time_t timestamp;
+};
+static queue<_messages_to_delete> messages_to_delete; // Messages to delete after 5s (message ID, timestamp)
+void pending_delete(Bot &bot) {
     while (running) {
         this_thread::sleep_for(chrono::seconds(1)); // Sleep for 1s
-        for (const Message::Ptr &message : messages_to_delete) {
+        while (!messages_to_delete.empty()) {
+            auto message = messages_to_delete.front();
             try {
-                if (message->date + 5 < chrono::system_clock::to_time_t(chrono::system_clock::now())) {
-                    bot.getApi().deleteMessage(message->chat->id, message->messageId);
-                    messages_to_delete.erase(remove(messages_to_delete.begin(), messages_to_delete.end(), message), messages_to_delete.end());
+                if (message.timestamp + 5 >= chrono::system_clock::to_time_t(chrono::system_clock::now())) {
+                    // The following messages are not ready to be deleted
+                    break;
                 }
+
+                bot.getApi().deleteMessage(message.chat_id, message.message_id);
+                messages_to_delete.pop();
             } catch (exception &e) {
-                printf("Failed to delete message %d: %s\n", message->messageId, e.what());
+                printf("Failed to delete message %d: %s\n", message.message_id, e.what());
             }
         }
     }
 }
+void add_temp_message(const Message::Ptr &message) {
+    _messages_to_delete m;
+    m.chat_id = message->chat->id;
+    m.message_id = message->messageId;
+    m.timestamp = message->date;
+    messages_to_delete.push(m);
+}
 
 bool auth(int64 id)
 {
-    return any_of(config.uids.begin(), config.uids.end(), [&](int64 uid)
-                  { return uid == id; });
+    for (int64 uid : config.uids)
+    {
+        if (id == uid)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void signal_handler(const int signal)
@@ -211,17 +233,21 @@ void handle_message(Bot &bot, const Message::Ptr message)
                     if (query->data == "yes") {
                         // Send the images to the channel in media group with the description
                         vector<InputMedia::Ptr> media;
+                        bool first = true;
                         for (const string& id : s.media_id) {
                             auto input_media = std::make_shared<InputMediaPhoto>();
                             input_media->media = id;
-                            input_media->caption = s.description;
+                            if (first) {
+                                input_media->caption = s.description;
+                                first = false;
+                            }
                             input_media->hasSpoiler = false;
                             media.push_back(input_media);
                         }
                         bot.getApi().sendMediaGroup(config.channel, media);
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "Images sent to the channel");
-                        bot.getApi().sendMessage(config.channel, "Tag: " + s.datetime);
+                        bot.getApi().sendMessage(s.uid, "Tag: `" + s.datetime + "`", false, 0, nullptr, "Markdown"); // Send the tag in markdown so that it can be copied
                     } else {
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "Canceled");
@@ -241,7 +267,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
                             info += image + " ";
                         }
                         info += "\n";
-                        fstream f(config.save_path + "info.txt", ios::out);
+                        fstream f(config.save_path + s.datetime + "/info.txt", ios::out);
                         f << info;
                         f.close();
                     }
@@ -308,45 +334,44 @@ void handle_message(Bot &bot, const Message::Ptr message)
 
 void handle_watermark(Bot &bot, Message::Ptr message)
 {
-    messages_to_delete.push_back(message);
     // This command must reply to a message
     if (message->replyToMessage == nullptr)
     {
-        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Reply to a message to set the watermark"));
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Reply to a message to set the watermark"));
+        return;
+    }
+    // Truncate the command
+    istringstream command_iss(message->text);
+    string datetime;
+    try {
+        getline(command_iss, datetime, ' ');
+        getline(command_iss, datetime, ' ');
+    } catch (exception &e) {
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Invalid command"));
         return;
     }
     // Argument: a datetime string sent by the bot in "/send" command
-    if (message->text.size() < 10)
-    {
-        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
-        return;
-    }
-    string datetime = message->text.substr(10);
-    if (datetime.size() != 19)
-    {
-        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
-        return;
-    }
     string path = config.save_path + datetime + "/";
     if (access(path.c_str(), F_OK) != 0)
     {
-        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
         return;
     }
     // Read the info.txt to get photo file ids and the description
     fstream f(path + "info.txt");
     if (!f.is_open())
     {
-        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Failed to open the file"));
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Failed to open the file"));
         return;
     }
     try {
         // Datetime
         string datetime_f;
-        getline(f, datetime);
-        if (datetime_f.substr(5).compare(datetime) != 0) {
-            throw exception();
-        }
+        getline(f, datetime_f);
 
         // User
         string user_f;
@@ -356,20 +381,24 @@ void handle_watermark(Bot &bot, Message::Ptr message)
         string description_f;
         getline(f, description_f);
         if (!description_f.starts_with("Description: ")) {
+            cout << description_f << endl;
             throw exception();
         }
         string description = description_f.substr(13);
 
         // Images
         string images_f;
-        getline(f, images_f);
+        getline(f, images_f, '\n');
         if (!images_f.starts_with("Images: ")) {
+            cout << images_f << endl;
             throw exception();
         }
         vector<string> images;
         string image;
         istringstream iss(images_f.substr(8));
         while (getline(iss, image, ' ')) {
+            // Remove the ".jpg" suffix
+            image = image.substr(0, image.size() - 4);
             images.push_back(image);
         }
 
@@ -377,18 +406,25 @@ void handle_watermark(Bot &bot, Message::Ptr message)
 
         // Upload
         vector<InputMedia::Ptr> media;
+        bool first = true;
         for (const string& img : images) {
             auto m = make_shared<InputMediaPhoto>();
             m->media = img;
-            m->caption = description;
+            if (first) {
+                m->caption = description;
+                first = false;
+            }
             m->hasSpoiler = false;
             media.push_back(m);
         }
         bot.getApi().sendMediaGroup(message->chat->id, media, false, message->replyToMessage->messageId);
+        add_temp_message(message);
         return;
     }
     catch (exception &e) {
-        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Wrong file format"));
+        cout << e.what() << endl;
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Wrong file format"));
         return;
     }
 }
@@ -591,7 +627,7 @@ int main(const int argc, const char **argv)
                                  { handle_message(bot, message); });
 
     // Start the message delete thread
-    jthread delete_messages_thread(delete_messages, ref(bot));
+    jthread delete_messages_thread(pending_delete, ref(bot));
     delete_messages_thread.detach();
 
     // Start the bot
