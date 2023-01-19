@@ -197,11 +197,11 @@ void handle_message(Bot &bot, const Message::Ptr message)
         s.description = message->text;
         if (s.images.empty())
         {
-            bot.getApi().sendMessage(message->chat->id, "Please send me the images first");
+            bot.getApi().sendMessage(message->chat->id, "请先发送图片");
             return;
         }
         // Send the final message
-        bot.getApi().sendMessage(message->chat->id, "Sending the images...");
+        bot.getApi().sendMessage(message->chat->id, "正在发送图片...");
 
         // Send the images to the user, get the file IDs
         // and store them in order to send them to the channel without uploading them again
@@ -223,7 +223,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
         keyboard->inlineKeyboard.back().push_back(std::make_shared<InlineKeyboardButton>());
         keyboard->inlineKeyboard.back().back()->text = "No";
         keyboard->inlineKeyboard.back().back()->callbackData = "no";
-        bot.getApi().sendMessage(message->chat->id, "Are you sure to send the images to the channel?", false, 0,
+        bot.getApi().sendMessage(message->chat->id, "确定要发送到频道吗？", false, 0,
                                  keyboard, "Markdown");
         // Stop the conversation
         s.sending = false;
@@ -246,11 +246,11 @@ void handle_message(Bot &bot, const Message::Ptr message)
                         }
                         bot.getApi().sendMediaGroup(config.channel, media);
                         // Send the confirmation message
-                        bot.getApi().sendMessage(s.uid, "Images sent to the channel");
-                        bot.getApi().sendMessage(s.uid, "Tag: `" + s.datetime + "`", false, 0, nullptr, "Markdown"); // Send the tag in markdown so that it can be copied
+                        bot.getApi().sendMessage(s.uid, "图片已发送至频道");
+                        bot.getApi().sendMessage(s.uid, "标签: `" + s.datetime + "`", false, 0, nullptr, "Markdown"); // Send the tag in markdown so that it can be copied
                     } else {
                         // Send the confirmation message
-                        bot.getApi().sendMessage(s.uid, "Canceled");
+                        bot.getApi().sendMessage(s.uid, "取消");
                     }
                     // Delete the confirmation message
                     bot.getApi().deleteMessage(query->message->chat->id, query->message->messageId);
@@ -293,7 +293,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
         auto f = fopen((s.path + filename).c_str(), "w");
         if (f == nullptr)
         {
-            bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
+            bot.getApi().sendMessage(message->chat->id, "打开文件失败");
             return;
         }
         auto content = bot.getApi().downloadFile(file->filePath);
@@ -307,7 +307,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
             f = fopen(original.c_str(), "w");
             if (f == nullptr)
             {
-                bot.getApi().sendMessage(message->chat->id, "Failed to open the file");
+                bot.getApi().sendMessage(message->chat->id, "打开文件失败");
                 return;
             }
             fwrite(content.data(), 1, content.size(), f);
@@ -316,20 +316,20 @@ void handle_message(Bot &bot, const Message::Ptr message)
     }
     catch (exception &e)
     {
-        bot.getApi().sendMessage(message->chat->id, "Failed to download the photo");
+        bot.getApi().sendMessage(message->chat->id, "图片下载失败");
         return;
     }
 
     // Add the watermark
     if (add_watermark(s.path + filename))
     {
-        bot.getApi().sendMessage(message->chat->id, "Failed to add the watermark");
+        bot.getApi().sendMessage(message->chat->id, "水印添加失败");
         return;
     }
 
     // Save the image
     s.images.push_back(filename);
-    bot.getApi().sendMessage(message->chat->id, "Image added");
+    bot.getApi().sendMessage(message->chat->id, "图片已添加");
 }
 
 void handle_watermark(Bot &bot, Message::Ptr message)
@@ -338,7 +338,7 @@ void handle_watermark(Bot &bot, Message::Ptr message)
     if (message->replyToMessage == nullptr)
     {
         add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Reply to a message to set the watermark"));
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "请回复一条消息"));
         return;
     }
     // Truncate the command
@@ -349,7 +349,7 @@ void handle_watermark(Bot &bot, Message::Ptr message)
         getline(command_iss, datetime, ' ');
     } catch (exception &e) {
         add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Invalid command"));
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "命令无效"));
         return;
     }
     // Argument: a datetime string sent by the bot in "/send" command
@@ -357,7 +357,7 @@ void handle_watermark(Bot &bot, Message::Ptr message)
     if (access(path.c_str(), F_OK) != 0)
     {
         add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "参数无效"));
         return;
     }
     // Read the info.txt to get photo file ids and the description
@@ -365,7 +365,7 @@ void handle_watermark(Bot &bot, Message::Ptr message)
     if (!f.is_open())
     {
         add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Failed to open the file"));
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "打开文件失败"));
         return;
     }
     try {
@@ -550,13 +550,13 @@ int main(const int argc, const char **argv)
     bot.getEvents().onCommand("start", [&bot](Message::Ptr message)
                               {
         if (!auth(message->from->id)) {
-            bot.getApi().sendMessage(message->chat->id, "You are not allowed to use this bot");
+            bot.getApi().sendMessage(message->chat->id, "你无法使用这个 bot");
             return;
         }
         // Send the welcome message
-        string msg = "Welcome to @" +  bot.getApi().getMe()->username + "!";
+        string msg = "欢迎使用 @" +  bot.getApi().getMe()->username + "!";
         bot.getApi().sendMessage(message->chat->id, msg);
-        bot.getApi().sendMessage(message->chat->id, "Send me '/send' to start"); });
+        bot.getApi().sendMessage(message->chat->id, "输入 '/send' 开始发送"); });
 
     // Register the /send command
     bot.getEvents().onCommand("send", [&bot](Message::Ptr message)
@@ -570,13 +570,14 @@ int main(const int argc, const char **argv)
         if (message->chat->type != Chat::Type::Private)
         {
             add_temp_message(message);
-            add_temp_message(bot.getApi().sendMessage(message->chat->id, "Please send me the command in private chat"));
+            add_temp_message(bot.getApi().sendMessage(message->chat->id, "请私聊我使用此命令"));
             return;
         }
 
         bot.getApi().sendMessage(message->chat->id, 
-            "Send me the images to add watermark"
-            " and the final message to send to the channel");
+            "发送要添加水印的图片，"
+            "最后发送一条描述文字，"
+            "或者发送 '/cancel' 取消发送");
         // Start the conversation
         status[message->from->id].uid = message->from->id;
         status[message->from->id].sending = true;
@@ -587,7 +588,7 @@ int main(const int argc, const char **argv)
             path = config.save_path + status[message->from->id].datetime + "/";
             if (mkdir(path.c_str(), 0777) != 0)
             {
-                bot.getApi().sendMessage(message->chat->id, "Failed to create the directory");
+                bot.getApi().sendMessage(message->chat->id, "创建目录失败");
                 return;
             }
         }
@@ -603,7 +604,7 @@ int main(const int argc, const char **argv)
 
         // Cancel the conversation
         status.erase(message->from->id);
-        bot.getApi().sendMessage(message->chat->id, "Canceled"); });
+        bot.getApi().sendMessage(message->chat->id, "取消"); });
 
     // Register the /watermark command
     bot.getEvents().onCommand("watermark", [&bot](Message::Ptr message)
@@ -624,7 +625,10 @@ int main(const int argc, const char **argv)
         }
 
         // Send the help message
-        string msg = "Send me '/send' to start";
+        string msg = "私聊发送 '/send' 来开始， "
+                     "回复某条消息 '/watermark <标签>' 向其发送已上传的图片， "
+                     "私聊发送 '/cancel' 来取消， "
+                     "发送 '/help' 来获取帮助";
         bot.getApi().sendMessage(message->chat->id, msg); });
 
     // Register the message handler
