@@ -184,6 +184,12 @@ void handle_message(Bot &bot, const Message::Ptr message)
         // Ignore the messages
         return;
     }
+
+    if (message->chat != nullptr && message->chat->type != Chat::Type::Private)
+    {
+        // Ignore the messages
+        return;
+    }
     _status &s = status[message->from->id];
     // Check if the message is a photo
     if (message->photo.empty())
