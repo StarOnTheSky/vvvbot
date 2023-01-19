@@ -18,11 +18,15 @@
     - Time: <time>
     - User: <user>
     - Message: <message>
-    - Images: <number of images>
+    - Images: <file ids of the photos>
 
     Commands:
     /start: Start the bot
     /send: Start sending
+    /cancel: Cancel sending
+    /watermark <datetime>: Reply to a message in the channel, and the bot will find the images with the same datetime and reply to the message with the watermarked images
+    /help: Show help message
+
 */
 
 #include <csignal>
@@ -33,6 +37,8 @@
 #include <vector>
 #include <map>
 #include <chrono>
+#include <thread>
+#include <fstream>
 
 #include <tgbot/tgbot.h>
 #include <opencv2/opencv.hpp>
@@ -65,8 +71,24 @@ struct _status
     vector<string> media_id;
     string description;
 };
-
 static map<int64, _status> status; // User ID -> Status
+
+static vector<Message::Ptr> messages_to_delete; // Messages to delete after 5s
+void delete_messages(Bot &bot) {
+    while (running) {
+        this_thread::sleep_for(chrono::seconds(1)); // Sleep for 1s
+        for (const Message::Ptr &message : messages_to_delete) {
+            try {
+                if (message->date + 5 < chrono::system_clock::to_time_t(chrono::system_clock::now())) {
+                    bot.getApi().deleteMessage(message->chat->id, message->messageId);
+                    messages_to_delete.erase(remove(messages_to_delete.begin(), messages_to_delete.end(), message), messages_to_delete.end());
+                }
+            } catch (exception &e) {
+                printf("Failed to delete message %d: %s\n", message->messageId, e.what());
+            }
+        }
+    }
+}
 
 bool auth(int64 id)
 {
@@ -193,11 +215,13 @@ void handle_message(Bot &bot, const Message::Ptr message)
                             auto input_media = std::make_shared<InputMediaPhoto>();
                             input_media->media = id;
                             input_media->caption = s.description;
+                            input_media->hasSpoiler = false;
                             media.push_back(input_media);
                         }
                         bot.getApi().sendMediaGroup(config.channel, media);
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "Images sent to the channel");
+                        bot.getApi().sendMessage(config.channel, "Tag: " + s.datetime);
                     } else {
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "Canceled");
@@ -212,13 +236,14 @@ void handle_message(Bot &bot, const Message::Ptr message)
                         }
                     } else {
                         // Write info.txt
-                        string info = s.path + "info.txt";
-                        auto f = fopen(info.c_str(), "w");
-                        if (f == nullptr) {
-                            printf("Failed to write %s\n", info.c_str());
+                        string info = "Time: " + s.datetime + "\nUser: " + to_string(s.uid) + "\nDescription: " + s.description + "\nImages: ";
+                        for (const string& image : s.images) {
+                            info += image + " ";
                         }
-                        fprintf(f, "Time: %s\nUser: %ld\nMessage: %s\nImages: %ld", s.datetime.c_str(), s.uid, s.description.c_str(), s.images.size());
-                        fclose(f);
+                        info += "\n";
+                        fstream f(config.save_path + "info.txt", ios::out);
+                        f << info;
+                        f.close();
                     }
                     status.erase(s.uid);
                     
@@ -279,6 +304,93 @@ void handle_message(Bot &bot, const Message::Ptr message)
     // Save the image
     s.images.push_back(filename);
     bot.getApi().sendMessage(message->chat->id, "Image added");
+}
+
+void handle_watermark(Bot &bot, Message::Ptr message)
+{
+    messages_to_delete.push_back(message);
+    // This command must reply to a message
+    if (message->replyToMessage == nullptr)
+    {
+        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Reply to a message to set the watermark"));
+        return;
+    }
+    // Argument: a datetime string sent by the bot in "/send" command
+    if (message->text.size() < 10)
+    {
+        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
+        return;
+    }
+    string datetime = message->text.substr(10);
+    if (datetime.size() != 19)
+    {
+        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
+        return;
+    }
+    string path = config.save_path + datetime + "/";
+    if (access(path.c_str(), F_OK) != 0)
+    {
+        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Invalid argument"));
+        return;
+    }
+    // Read the info.txt to get photo file ids and the description
+    fstream f(path + "info.txt");
+    if (!f.is_open())
+    {
+        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Failed to open the file"));
+        return;
+    }
+    try {
+        // Datetime
+        string datetime_f;
+        getline(f, datetime);
+        if (datetime_f.substr(5).compare(datetime) != 0) {
+            throw exception();
+        }
+
+        // User
+        string user_f;
+        getline(f, user_f);
+
+        // Description
+        string description_f;
+        getline(f, description_f);
+        if (!description_f.starts_with("Description: ")) {
+            throw exception();
+        }
+        string description = description_f.substr(13);
+
+        // Images
+        string images_f;
+        getline(f, images_f);
+        if (!images_f.starts_with("Images: ")) {
+            throw exception();
+        }
+        vector<string> images;
+        string image;
+        istringstream iss(images_f.substr(8));
+        while (getline(iss, image, ' ')) {
+            images.push_back(image);
+        }
+
+        f.close();
+
+        // Upload
+        vector<InputMedia::Ptr> media;
+        for (const string& img : images) {
+            auto m = make_shared<InputMediaPhoto>();
+            m->media = img;
+            m->caption = description;
+            m->hasSpoiler = false;
+            media.push_back(m);
+        }
+        bot.getApi().sendMediaGroup(message->chat->id, media, false, message->replyToMessage->messageId);
+        return;
+    }
+    catch (exception &e) {
+        messages_to_delete.push_back(bot.getApi().sendMessage(message->chat->id, "Wrong file format"));
+        return;
+    }
 }
 
 int main(const int argc, const char **argv)
@@ -452,6 +564,16 @@ int main(const int argc, const char **argv)
         status.erase(message->from->id);
         bot.getApi().sendMessage(message->chat->id, "Canceled"); });
 
+    // Register the /watermark command
+    bot.getEvents().onCommand("watermark", [&bot](Message::Ptr message)
+                              {
+        if (!auth(message->from->id)) {
+            // Ignore the message
+            return;
+        }
+
+        handle_watermark(bot, message); });
+
     // Register the /help command
     bot.getEvents().onCommand("help", [&bot](Message::Ptr message)
                               {
@@ -467,6 +589,10 @@ int main(const int argc, const char **argv)
     // Register the message handler
     bot.getEvents().onAnyMessage([&bot](Message::Ptr message)
                                  { handle_message(bot, message); });
+
+    // Start the message delete thread
+    jthread delete_messages_thread(delete_messages, ref(bot));
+    delete_messages_thread.detach();
 
     // Start the bot
     printf("Bot username: %s\n", bot.getApi().getMe()->username.c_str());
