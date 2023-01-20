@@ -1,9 +1,10 @@
 /*
-    Source code of @vps_watermark_bot on Telegram
+    @vps_watermark_bot 的源代码
 
-    Arguments:
-    -t: (Required) The token of the bot
+    参数:
+    -t: (必需) Telegram Bot 的 Token
     -d: (Required) The channel to send the watermarked images to
+    -o: (Required) The channel to send the original images to
     -u: (Required) Allowed UIDs (separated by commas ',')
     -w: The watermark image file to add to the images (default is watermark.png)
     -a: The alpha value of the watermark (default is 0.5)
@@ -20,12 +21,13 @@
     - Message: <message>
     - Images: <file ids of the photos>
 
-    Commands:
-    /start: Start the bot
-    /send: Start sending
-    /cancel: Cancel sending
-    /watermark <datetime>: Reply to a message in the channel, and the bot will find the images with the same datetime and reply to the message with the watermarked images
-    /help: Show help message
+    命令:
+    /start: 开始
+    /send: 发送图片
+    /cancel: 取消发送
+    /watermark <标签>: 回复某一条消息, 然后机器人会用对应标签的水印图组来回复这个消息
+    /modify <标签> <新内容>: 修改某一条消息的内容
+    /help: 显示帮助信息
 
 */
 
@@ -53,6 +55,7 @@ struct _config
 {
     string token;
     string channel;
+    string channel_orig;
     string watermark;
     double alpha;
     vector<int64> uids;
@@ -69,6 +72,7 @@ struct _status
     string datetime;
     string path;
     vector<string> media_id;
+    vector<string> media_orig_id;
     string description;
 };
 static map<int64, _status> status; // User ID -> Status
@@ -244,13 +248,25 @@ void handle_message(Bot &bot, const Message::Ptr message)
                             auto input_media = std::make_shared<InputMediaPhoto>();
                             input_media->media = id;
                             if (first) {
-                                input_media->caption = s.description;
+                                input_media->caption = s.description + "\n标签： " + s.datetime;
                                 first = false;
                             }
                             input_media->hasSpoiler = false;
                             media.push_back(input_media);
                         }
                         bot.getApi().sendMediaGroup(config.channel, media);
+                        media.clear();
+                        first = true;
+                        for (const string& id : s.media_orig_id) {
+                            auto input_media = std::make_shared<InputMediaPhoto>();
+                            input_media->media = id;
+                            if (first) {
+                                input_media->caption = s.description;
+                                first = false;
+                            }
+                            input_media->hasSpoiler = false;
+                            media.push_back(input_media);
+                        }
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "图片已发送至频道");
                         bot.getApi().sendMessage(s.uid, "标签: `" + s.datetime + "`", false, 0, nullptr, "Markdown"); // Send the tag in markdown so that it can be copied
@@ -292,6 +308,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
     // Get the photo
     const PhotoSize::Ptr photo = message->photo.back();
     // Download the photo
+    s.media_orig_id.push_back(photo->fileId);
     string filename = photo->fileId + ".jpg";
     try
     {
@@ -432,6 +449,99 @@ void handle_watermark(Bot &bot, Message::Ptr message)
     }
 }
 
+void modify_desc(Bot &bot, Message::Ptr message)
+{    
+    if (message->chat != nullptr && message->chat->type != Chat::Type::Private)
+    {
+        // Ignore the messages
+        return;
+    }
+    // 解析命令
+    istringstream command_iss(message->text);
+    string datetime;
+    string new_desc;
+    try {
+        getline(command_iss, datetime, ' '); // "/modify"
+        getline(command_iss, datetime, ' '); // datetime
+        command_iss >> new_desc; // 新的描述
+        // 将描述中的换行符替换为空格
+        for (char &c : new_desc)
+            if (c == '\n')
+                c = ' ';
+
+        // 检查描述是否为空
+        if (new_desc.empty())
+            throw exception();
+    } catch (exception &e) {
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "命令无效"));
+        return;
+    }
+    // 检查路径是否存在
+    string path = config.save_path + datetime + "/";
+    if (access(path.c_str(), F_OK) != 0)
+    {
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "参数无效"));
+        return;
+    }
+    // 读取 info.txt 
+    fstream f(path + "info.txt", ios::in | ios::out);
+    if (!f.is_open())
+    {
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "打开文件失败"));
+        return;
+    }
+    // 读取文件内容, 并修改描述
+    vector<string> lines;
+    string line;
+    string orig_desc;
+    try {
+        while (getline(f, line))
+        {
+            if (line.starts_with("Description: "))
+            {
+                orig_desc = line.substr(13);
+                line = "Description: " + new_desc;
+            }
+            lines.push_back(line);
+        }
+        f.close();
+    }
+    catch (exception &e) {
+        bot.getApi().sendMessage(message->chat->id, "文件格式错误");
+        f.close();
+        return;
+    }
+    // 写入文件
+    f.open(path + "info.txt", ios::out);
+    if (!f.is_open())
+    {
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "打开文件失败"));
+        return;
+    }
+    try {
+        for (const string& l : lines)
+        {
+            f << l << endl;
+        }
+        f.close();
+    }
+    catch (exception &e) {
+        bot.getApi().sendMessage(message->chat->id, "文件写入失败");
+        f.close();
+        return;
+    }
+    
+    // 修改成功
+    bot.getApi().sendMessage(message->chat->id, "修改成功");
+    bot.getApi().sendMessage(message->chat->id, "原描述: " + orig_desc);
+    bot.getApi().sendMessage(message->chat->id, "新描述: " + new_desc);
+    return;
+}
+
 int main(const int argc, const char **argv)
 {
     // Parse arguments
@@ -446,6 +556,10 @@ int main(const int argc, const char **argv)
         else if (string(argv[i]) == "-d")
         {
             config.channel = argv[++i];
+        }
+        else if (string(argv[i]) == "-o") 
+        {
+            config.channel_orig = argv[++i];
         }
         else if (string(argv[i]) == "-w")
         {
@@ -621,6 +735,16 @@ int main(const int argc, const char **argv)
         }
 
         handle_watermark(bot, message); });
+    
+    // Register the /modify command
+    bot.getEvents().onCommand("modify", [&bot](Message::Ptr message)
+                              {
+        if (!auth(message->from->id)) {
+            // Ignore the message
+            return;
+        }
+
+        modify_desc(bot, message); });
 
     // Register the /help command
     bot.getEvents().onCommand("help", [&bot](Message::Ptr message)
@@ -631,9 +755,10 @@ int main(const int argc, const char **argv)
         }
 
         // Send the help message
-        string msg = "私聊发送 '/send' 来开始， "
-                     "回复某条消息 '/watermark <标签>' 向其发送已上传的图片， "
-                     "私聊发送 '/cancel' 来取消， "
+        string msg = "私聊发送 '/send' 来开始， \n"
+                     "回复某条消息 '/watermark <标签>' 向其发送已上传的图片， \n"
+                     "私聊发送 '/cancel' 来取消， \n"
+                     "私聊发送 '/modify <标签> <内容>' 来修改图片的描述， \n"
                      "发送 '/help' 来获取帮助";
         bot.getApi().sendMessage(message->chat->id, msg); });
 
