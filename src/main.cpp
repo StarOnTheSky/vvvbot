@@ -390,7 +390,7 @@ void handle_watermark(Bot &bot, Message::Ptr message)
     try {
         // 从水印图片频道复制这条消息
         vector<MessageEntity::Ptr> entities;
-        bot.getApi().copyMessage(config.channel, message->chat->id, message_id, nullptr,
+        bot.getApi().copyMessage(message->chat->id, config.channel, message_id, "",
         "markdown", entities, true, message->replyToMessage->messageId, false);
     } catch (exception &e) {
         add_temp_message(message);
@@ -625,7 +625,7 @@ int main(const int argc, const char **argv)
     TgLongPoll longPoll(bot);
     while (running)
     {
-        printf("Long poll started\n");
+        // printf("Long poll started\n");
         longPoll.start();
     }
     return 0;
