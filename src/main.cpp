@@ -267,9 +267,9 @@ void handle_message(Bot &bot, const Message::Ptr message)
                             input_media->hasSpoiler = false;
                             media.push_back(input_media);
                         }
+                        bot.getApi().sendMediaGroup(config.channel_orig, media);
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "图片已发送至频道");
-                        bot.getApi().sendMessage(s.uid, "标签: `" + s.datetime + "`", false, 0, nullptr, "Markdown"); // Send the tag in markdown so that it can be copied
                     } else {
                         // Send the confirmation message
                         bot.getApi().sendMessage(s.uid, "取消");
@@ -357,188 +357,42 @@ void handle_message(Bot &bot, const Message::Ptr message)
 
 void handle_watermark(Bot &bot, Message::Ptr message)
 {
-    // This command must reply to a message
+    // 这条命令必须回复一条消息
     if (message->replyToMessage == nullptr)
     {
         add_temp_message(message);
         add_temp_message(bot.getApi().sendMessage(message->chat->id, "请回复一条消息"));
         return;
     }
-    // Truncate the command
-    istringstream command_iss(message->text);
-    string datetime;
-    try {
-        getline(command_iss, datetime, ' ');
-        getline(command_iss, datetime, ' ');
-    } catch (exception &e) {
-        add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "命令无效"));
-        return;
-    }
-    // Argument: a datetime string sent by the bot in "/send" command
-    string path = config.save_path + datetime + "/";
-    if (access(path.c_str(), F_OK) != 0)
-    {
-        add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "参数无效"));
-        return;
-    }
-    // Read the info.txt to get photo file ids and the description
-    fstream f(path + "info.txt");
-    if (!f.is_open())
-    {
-        add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "打开文件失败"));
-        return;
-    }
-    try {
-        // Datetime
-        string datetime_f;
-        getline(f, datetime_f);
-
-        // User
-        string user_f;
-        getline(f, user_f);
-
-        // Description
-        string description_f;
-        getline(f, description_f);
-        if (!description_f.starts_with("Description: ")) {
-            throw exception();
-        }
-        string description = description_f.substr(13);
-
-        // Images
-        string images_f;
-        getline(f, images_f, '\n');
-        if (!images_f.starts_with("Images: ")) {
-            throw exception();
-        }
-        vector<string> images;
-        string image;
-        istringstream iss(images_f.substr(8));
-        while (getline(iss, image, ' ')) {
-            // Remove the ".jpg" suffix
-            image = image.substr(0, image.size() - 4);
-            images.push_back(image);
-        }
-
-        f.close();
-
-        // Upload
-        vector<InputMedia::Ptr> media;
-        bool first = true;
-        for (const string& img : images) {
-            auto m = make_shared<InputMediaPhoto>();
-            m->media = img;
-            if (first) {
-                m->caption = description;
-                first = false;
-            }
-            m->hasSpoiler = false;
-            media.push_back(m);
-        }
-        bot.getApi().sendMediaGroup(message->chat->id, media, false, message->replyToMessage->messageId);
-        add_temp_message(message);
-        return;
-    }
-    catch (exception &e) {
-        add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "Wrong file format"));
-        return;
-    }
-}
-
-void modify_desc(Bot &bot, Message::Ptr message)
-{    
-    if (message->chat != nullptr && message->chat->type != Chat::Type::Private)
-    {
-        // Ignore the messages
-        return;
-    }
     // 解析命令
     istringstream command_iss(message->text);
-    string datetime;
-    string new_desc;
+    string message_id_s;
     try {
-        getline(command_iss, datetime, ' '); // "/modify"
-        getline(command_iss, datetime, ' '); // datetime
-        command_iss >> new_desc; // 新的描述
-        // 将描述中的换行符替换为空格
-        for (char &c : new_desc)
-            if (c == '\n')
-                c = ' ';
-
-        // 检查描述是否为空
-        if (new_desc.empty())
-            throw exception();
+        getline(command_iss, message_id_s, ' ');
+        getline(command_iss, message_id_s, ' ');
     } catch (exception &e) {
         add_temp_message(message);
         add_temp_message(bot.getApi().sendMessage(message->chat->id, "命令无效"));
         return;
     }
-    // 检查路径是否存在
-    string path = config.save_path + datetime + "/";
-    if (access(path.c_str(), F_OK) != 0)
-    {
-        add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "参数无效"));
-        return;
-    }
-    // 读取 info.txt 
-    fstream f(path + "info.txt", ios::in | ios::out);
-    if (!f.is_open())
-    {
-        add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "打开文件失败"));
-        return;
-    }
-    // 读取文件内容, 并修改描述
-    vector<string> lines;
-    string line;
-    string orig_desc;
+    // 参数: int32 消息ID
+    int32_t message_id;
     try {
-        while (getline(f, line))
-        {
-            if (line.starts_with("Description: "))
-            {
-                orig_desc = line.substr(13);
-                line = "Description: " + new_desc;
-            }
-            lines.push_back(line);
-        }
-        f.close();
-    }
-    catch (exception &e) {
-        bot.getApi().sendMessage(message->chat->id, "文件格式错误");
-        f.close();
-        return;
-    }
-    // 写入文件
-    f.open(path + "info.txt", ios::out);
-    if (!f.is_open())
-    {
-        bot.getApi().sendMessage(message->chat->id, "打开文件失败");
+        message_id = stoi(message_id_s);
+    } catch (exception &e) {
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "命令无效"));
         return;
     }
     try {
-        for (const string& l : lines)
-        {
-            f << l << endl;
-        }
-        f.close();
+        // 从水印图片频道复制这条消息
+        vector<MessageEntity::Ptr> entities;
+        bot.getApi().copyMessage(config.channel, message->chat->id, message_id, nullptr,
+        "markdown", entities, true, message->replyToMessage->messageId, false);
+    } catch (exception &e) {
+        add_temp_message(message);
+        add_temp_message(bot.getApi().sendMessage(message->chat->id, "发送消息失败"));
     }
-    catch (exception &e) {
-        bot.getApi().sendMessage(message->chat->id, "文件写入失败");
-        f.close();
-        return;
-    }
-    
-    // 修改成功
-    bot.getApi().sendMessage(message->chat->id, "修改成功");
-    bot.getApi().sendMessage(message->chat->id, "原描述: " + orig_desc);
-    bot.getApi().sendMessage(message->chat->id, "新描述: " + new_desc);
-    return;
 }
 
 int main(const int argc, const char **argv)
@@ -734,16 +588,6 @@ int main(const int argc, const char **argv)
         }
 
         handle_watermark(bot, message); });
-    
-    // Register the /modify command
-    bot.getEvents().onCommand("modify", [&bot](Message::Ptr message)
-                              {
-        if (!auth(message->from->id)) {
-            // Ignore the message
-            return;
-        }
-
-        modify_desc(bot, message); });
 
     // Register the /help command
     bot.getEvents().onCommand("help", [&bot](Message::Ptr message)
