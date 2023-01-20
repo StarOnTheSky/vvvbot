@@ -183,7 +183,7 @@ string iso8601()
 void handle_message(Bot &bot, const Message::Ptr message)
 {
     // Check status
-    if (!status.count(message->from->id))
+    if (!status.contains(message->from->id))
     {
         // Ignore the messages
         return;
@@ -195,6 +195,12 @@ void handle_message(Bot &bot, const Message::Ptr message)
         return;
     }
     _status &s = status[message->from->id];
+    // Check if the user is sending
+    if (!s.sending)
+    {
+        // Ignore the messages
+        return;
+    }
     // Check if the message is a photo
     if (message->photo.empty())
     {
@@ -237,72 +243,7 @@ void handle_message(Bot &bot, const Message::Ptr message)
                                  keyboard, "Markdown");
         // Stop the conversation
         s.sending = false;
-        // Start the confirmation
-        bot.getEvents().onCallbackQuery([&s, &bot](CallbackQuery::Ptr query)
-                                        {
-                    if (query->data == "yes") {
-                        // Send the images to the channel in media group with the description
-                        vector<InputMedia::Ptr> media;
-                        bool first = true;
-                        for (const string& id : s.media_id) {
-                            auto input_media = std::make_shared<InputMediaPhoto>();
-                            input_media->media = id;
-                            if (first) {
-                                input_media->caption = s.description + "\n标签： " + s.datetime;
-                                first = false;
-                            }
-                            input_media->hasSpoiler = false;
-                            media.push_back(input_media);
-                        }
-                        bot.getApi().sendMediaGroup(config.channel, media);
-                        media.clear();
-                        first = true;
-                        for (const string& id : s.media_orig_id) {
-                            auto input_media = std::make_shared<InputMediaPhoto>();
-                            input_media->media = id;
-                            if (first) {
-                                input_media->caption = s.description;
-                                first = false;
-                            }
-                            input_media->hasSpoiler = false;
-                            media.push_back(input_media);
-                        }
-                        bot.getApi().sendMediaGroup(config.channel_orig, media);
-                        // Send the confirmation message
-                        bot.getApi().sendMessage(s.uid, "图片已发送至频道");
-                    } else {
-                        // Send the confirmation message
-                        bot.getApi().sendMessage(s.uid, "取消");
-                    }
-                    // Delete the confirmation message
-                    bot.getApi().deleteMessage(query->message->chat->id, query->message->messageId);
 
-                    // Clean up
-                    if (config.save_path.empty()) {
-                        for (const string& image : s.images) {
-                            remove(image.c_str());
-                        }
-                    } else {
-                        // Write info.txt
-                        string info = "Time: " + s.datetime + "\nUser: " + to_string(s.uid) + "\nDescription: " + s.description + "\nImages: ";
-                        for (const string& image : s.images) {
-                            info += image + " ";
-                        }
-                        info += "\n";
-                        fstream f(config.save_path + s.datetime + "/info.txt", ios::out);
-                        f << info;
-                        f.close();
-                    }
-                    status.erase(s.uid);
-                    
-                    // Stop the confirmation
-                    bot.getEvents().onCallbackQuery(nullptr); });
-        return;
-    }
-    // Check if the user is sending images
-    if (!s.sending)
-    {
-        // Ignore the images
         return;
     }
     // Get the photo
@@ -353,6 +294,68 @@ void handle_message(Bot &bot, const Message::Ptr message)
     // Save the image
     s.images.push_back(filename);
     bot.getApi().sendMessage(message->chat->id, "图片已添加");
+}
+
+void handle_callback(Bot &bot, CallbackQuery::Ptr query) {
+    if (!status.contains(query->from->id)) {
+        // Ignore the messages
+        return;
+    }
+    auto s = status[query->from->id];
+    if (query->data == "yes") {
+        // Send the images to the channel in media group with the description
+        vector<InputMedia::Ptr> media;
+        bool first = true;
+        for (const string& id : s.media_id) {
+            auto input_media = std::make_shared<InputMediaPhoto>();
+            input_media->media = id;
+            if (first) {
+                input_media->caption = s.description + "\n标签： " + s.datetime;
+                first = false;
+            }
+            input_media->hasSpoiler = false;
+            media.push_back(input_media);
+        }
+        bot.getApi().sendMediaGroup(config.channel, media);
+        media.clear();
+        first = true;
+        for (const string& id : s.media_orig_id) {
+            auto input_media = std::make_shared<InputMediaPhoto>();
+            input_media->media = id;
+            if (first) {
+                input_media->caption = s.description;
+                first = false;
+            }
+            input_media->hasSpoiler = false;
+            media.push_back(input_media);
+        }
+        bot.getApi().sendMediaGroup(config.channel_orig, media);
+        // Send the confirmation message
+        bot.getApi().sendMessage(s.uid, "图片已发送至频道");
+    } else {
+        // Send the confirmation message
+        bot.getApi().sendMessage(s.uid, "取消");
+    }
+    // Delete the confirmation message
+    bot.getApi().deleteMessage(query->message->chat->id, query->message->messageId);
+
+    // Clean up
+    if (config.save_path.empty()) {
+        for (const string& image : s.images) {
+            remove(image.c_str());
+        }
+    } else {
+        // Write info.txt
+        string info = "Time: " + s.datetime + "\nUser: " + to_string(s.uid) + "\nDescription: " + s.description + "\nImages: ";
+        for (const string& image : s.images) {
+            info += image + " ";
+        }
+        info += "\n";
+        fstream f(config.save_path + s.datetime + "/info.txt", ios::out);
+        f << info;
+        f.close();
+    }
+    status.erase(s.uid);
 }
 
 void handle_watermark(Bot &bot, Message::Ptr message)
@@ -608,6 +611,10 @@ int main(const int argc, const char **argv)
     // Register the message handler
     bot.getEvents().onAnyMessage([&bot](Message::Ptr message)
                                  { handle_message(bot, message); });
+
+    // Register the callback query handler
+    bot.getEvents().onCallbackQuery([&bot](CallbackQuery::Ptr query)
+                                    { handle_callback(bot, query); });
 
     // Start the message delete thread
     jthread delete_messages_thread(pending_delete, ref(bot));
