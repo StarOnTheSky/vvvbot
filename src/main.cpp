@@ -518,8 +518,7 @@ void modify_desc(Bot &bot, Message::Ptr message)
     f.open(path + "info.txt", ios::out);
     if (!f.is_open())
     {
-        add_temp_message(message);
-        add_temp_message(bot.getApi().sendMessage(message->chat->id, "打开文件失败"));
+        bot.getApi().sendMessage(message->chat->id, "打开文件失败");
         return;
     }
     try {
