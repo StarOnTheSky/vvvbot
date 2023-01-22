@@ -310,7 +310,7 @@ void handle_callback(Bot &bot, CallbackQuery::Ptr query) {
             auto input_media = std::make_shared<InputMediaPhoto>();
             input_media->media = id;
             if (first) {
-                input_media->caption = s.description + "\n标签： " + s.datetime;
+                input_media->caption = s.description;
                 first = false;
             }
             input_media->hasSpoiler = false;
