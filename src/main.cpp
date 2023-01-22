@@ -94,7 +94,7 @@ void pending_delete(Bot &bot) {
                     break;
                 }
 
-                bot.getApi().deleteMessage(message.chat_id, message.message_id);
+                // bot.getApi().deleteMessage(message.chat_id, message.message_id);
                 messages_to_delete.pop();
             } catch (exception &e) {
                 printf("Failed to delete message %d: %s\n", message.message_id, e.what());
